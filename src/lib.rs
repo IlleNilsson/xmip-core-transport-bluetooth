@@ -333,36 +333,25 @@ impl Loopback for BluetoothTransport {
     /// In order on one thread: the server lives in the radio and answers as
     /// the client sends, so the send goes first and the take finds it.
     fn round(&self, payload: &[u8]) -> Result<Arrived> {
-        let far = self.far_end()?;
-        self.send_to(far.address(), payload)?;
-        let arrived = far.take_one()?;
-        if arrived.bytes != payload {
-            return Err(protocol_error("sent, but what the server took differs"));
-        }
-        Ok(arrived)
+        self.round_in_order(payload)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use transport::payload::edge_payloads;
 
     /// The shapes a protocol breaks on, as the Playground lists them.
-    fn edge_payloads() -> Vec<(&'static str, Vec<u8>)> {
-        vec![
-            ("empty", Vec::new()),
-            ("one byte", vec![0x2a]),
-            ("every byte", (0..=255).collect()),
-            ("nul run", vec![0; 512]),
-            ("high bytes", vec![0xff; 512]),
-            ("crlf storm", b"\r\n".repeat(400)),
-            (
-                "a mebibyte",
-                (0..1u32 << 20)
-                    .map(|n| u8::try_from(n * 31 % 256).unwrap_or(0))
-                    .collect(),
-            ),
-        ]
+    fn payloads() -> Vec<(&'static str, Vec<u8>)> {
+        let mut payloads = edge_payloads();
+        payloads.extend([(
+            "a mebibyte",
+            (0..1u32 << 20)
+                .map(|n| u8::try_from(n * 31 % 256).unwrap_or(0))
+                .collect(),
+        )]);
+        payloads
     }
 
     #[test]
@@ -381,7 +370,7 @@ mod tests {
     #[test]
     fn the_loopback_returns_the_edges_whole() {
         let loopback = BluetoothTransport::loopback();
-        for (name, bytes) in edge_payloads() {
+        for (name, bytes) in payloads() {
             let arrived = loopback
                 .round(&bytes)
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
