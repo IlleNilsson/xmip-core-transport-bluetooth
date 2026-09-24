@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use transport::error::{Result, TransportError, protocol_error};
+use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Directions, Transport};
 
@@ -286,38 +287,21 @@ impl BluetoothTransport {
     }
 }
 
-/// The server on the link, holding the Stream the link delivered.
-struct Served {
-    radio: Arc<LoopbackRadio>,
-    origin: String,
-    address: String,
-}
-
-impl FarEnd for Served {
-    fn address(&self) -> &str {
-        &self.address
-    }
-
-    fn take_one(self: Box<Self>) -> Result<Arrived> {
-        let (dlci, bytes) = self
-            .radio
-            .take()
-            .ok_or_else(|| protocol_error("no data link closed"))?;
-        Ok(Arrived::new(format!("{}{}", self.origin, dlci >> 1), bytes))
-    }
-}
-
 impl Loopback for BluetoothTransport {
+    /// The server on the link, holding the Stream the link delivered.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
         let radio = self
             .loopback
             .as_ref()
             .ok_or_else(|| protocol_error("a controller, not a loopback radio"))?;
-        Ok(Box::new(Served {
-            radio: Arc::clone(radio),
-            origin: format!("bt://{}/", self.radio.name()),
-            address: self.origin(self.channel),
-        }))
+        let radio = Arc::clone(radio);
+        let origin = format!("bt://{}/", self.radio.name());
+        Ok(Box::new(Held::new(self.origin(self.channel), move || {
+            let (dlci, bytes) = radio
+                .take()
+                .ok_or_else(|| protocol_error("no data link closed"))?;
+            Ok(Arrived::new(format!("{origin}{}", dlci >> 1), bytes))
+        })))
     }
 
     fn send_to(&self, address: &str, payload: &[u8]) -> Result<()> {
