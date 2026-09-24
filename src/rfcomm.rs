@@ -3,7 +3,11 @@
 //! information and a frame check sequence. DLCI 0 is the multiplexer's
 //! control channel; a server channel `n` is DLCI `2n` seen from the side
 //! that started the multiplexer.
+//!
+//! The frame check sequence is TS 27.010's CRC-8, codec's: over the address
+//! and control bytes of a UIH frame, and the length bytes too of any other.
 
+use codec::crc::CRC_8_TS_27_010;
 use transport::error::{Result, protocol_error};
 
 /// The default maximum frame size, N1: what a UIH frame carries unless the
@@ -111,7 +115,7 @@ impl Frame {
         } else {
             out.len()
         };
-        let check = fcs(&out[..checked]);
+        let check = CRC_8_TS_27_010.checksum(&out[..checked]);
         out.extend_from_slice(&self.information);
         out.push(check);
         out
@@ -139,30 +143,11 @@ impl Frame {
             return Err(protocol_error("bytes after the check sequence"));
         }
         let checked = if control == Control::Uih { 2 } else { at };
-        if fcs(&bytes[..checked]) != check {
+        if CRC_8_TS_27_010.checksum(&bytes[..checked]) != check {
             return Err(protocol_error("a check sequence that does not check"));
         }
         Self::new(address >> 2, control, information)
     }
-}
-
-/// The frame check sequence: the CRC-8 of TS 07.10, reflected, seeded with
-/// ones and complemented — over the address and control bytes of a UIH
-/// frame, and the length bytes too of any other.
-#[must_use]
-pub fn fcs(bytes: &[u8]) -> u8 {
-    let crc = bytes.iter().fold(0xffu8, |mut crc, byte| {
-        crc ^= byte;
-        for _ in 0..8 {
-            crc = if crc & 1 != 0 {
-                (crc >> 1) ^ 0xe0
-            } else {
-                crc >> 1
-            };
-        }
-        crc
-    });
-    0xff - crc
 }
 
 #[cfg(test)]
@@ -183,7 +168,10 @@ mod tests {
         let uih = Frame::new(2, Control::Uih, b"data").expect("frame");
         let bytes = uih.encode();
         assert_eq!(&bytes[..3], &[0x0b, 0xef, 0x09]);
-        assert_eq!(bytes[bytes.len() - 1], fcs(&[0x0b, 0xef]));
+        assert_eq!(
+            bytes[bytes.len() - 1],
+            CRC_8_TS_27_010.checksum(&[0x0b, 0xef])
+        );
         assert_eq!(Frame::decode(&bytes).expect("decode"), uih);
         let long = Frame::new(2, Control::Uih, &[7; 300]).expect("frame");
         let bytes = long.encode();
