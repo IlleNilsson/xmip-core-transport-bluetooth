@@ -310,14 +310,10 @@ impl Loopback for BluetoothTransport {
             .send(address, payload)
     }
 
-    fn unblock(&self, _address: &str) {
-        // The link is in-process; nothing listens on a socket.
-    }
-
     /// In order on one thread: the server lives in the radio and answers as
     /// the client sends, so the send goes first and the take finds it.
-    fn round(&self, payload: &[u8]) -> Result<Arrived> {
-        self.round_in_order(payload)
+    fn exchanges_in_order(&self) -> bool {
+        true
     }
 }
 
