@@ -28,11 +28,15 @@ use std::time::Duration;
 use transport::error::{Result, TransportError, protocol_error};
 use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Arrived, Directions, Transport};
+use transport::{Arrived, Configured, Directions, Transport};
+use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
 use l2cap::Signal;
 use rfcomm::Control;
 use session::Session;
+
+/// How long a peer is waited on when a Location says nothing else.
+pub const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Where packets go and come from: one ACL link.
 pub trait Radio: Send + Sync {
@@ -125,7 +129,7 @@ impl BluetoothTransport {
         Self {
             radio,
             channel,
-            timeout: Duration::from_secs(5),
+            timeout: TIMEOUT,
             loopback: None,
         }
     }
@@ -274,6 +278,48 @@ impl Transport for BluetoothTransport {
     }
 }
 
+impl Configured for BluetoothTransport {
+    /// The address names the radio. `loopback`, the in-process link, is the
+    /// one the estate has; a controller over HCI joins when it exposes one.
+    const SETTINGS: &'static Settings = &Settings {
+        technology: env!("CARGO_PKG_NAME"),
+        settings: &[
+            Setting {
+                name: "channel",
+                kind: Kind::Integer {
+                    minimum: 1,
+                    maximum: 30,
+                },
+                presence: Presence::Required,
+                meaning: "The RFCOMM server channel a Send Location opens and a Receive \
+                          Location serves.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "timeout",
+                kind: Kind::Duration,
+                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
+                meaning: "How long a peer that does not answer is waited on.",
+                applies: Applies::Both,
+            },
+        ],
+    };
+
+    fn configured(address: &str, settings: &Read) -> Result<Self> {
+        let radio: Arc<dyn Radio> = match address {
+            "loopback" => Arc::new(LoopbackRadio::new()),
+            other => {
+                return Err(protocol_error(format!(
+                    "{other:?} is not a radio this estate has; `loopback` is"
+                )));
+            }
+        };
+        let channel = u8::try_from(settings.integer("channel"))
+            .map_err(|_| protocol_error("a server channel over 30"))?;
+        Ok(Self::new(radio, channel).timing_out_after(settings.duration("timeout")))
+    }
+}
+
 impl BluetoothTransport {
     /// Both ends on one in-process link: a client on server channel 3 and
     /// the server that answers it, the loopback timeout on the client.
@@ -321,6 +367,33 @@ impl Loopback for BluetoothTransport {
 mod tests {
     use super::*;
     use transport::payload::edge_payloads;
+    use xcore::settings::Given;
+
+    #[test]
+    fn bluetooth_declares_its_settings_and_reads_through_them() {
+        assert_eq!(
+            BluetoothTransport::SETTINGS.problems(),
+            Vec::<String>::new()
+        );
+        let given = [
+            ("channel".to_string(), Given::Integer(7)),
+            ("timeout".to_string(), Given::Text("250ms".to_string())),
+        ];
+        let built = BluetoothTransport::open("loopback", Applies::Send, &given).expect("built");
+        assert_eq!(built.channel, 7);
+        assert_eq!(built.timeout, Duration::from_millis(250));
+        let given = [("channel".to_string(), Given::Integer(3))];
+        let built = BluetoothTransport::open("loopback", Applies::Receive, &given).expect("built");
+        assert_eq!(built.timeout, TIMEOUT);
+        let Err(refused) = BluetoothTransport::open("loopback", Applies::Receive, &[]) else {
+            panic!("channel is required");
+        };
+        assert!(
+            refused.message.contains("\"channel\""),
+            "{}",
+            refused.message
+        );
+    }
 
     /// The shapes a protocol breaks on, as the Playground lists them.
     fn payloads() -> Vec<(&'static str, Vec<u8>)> {
