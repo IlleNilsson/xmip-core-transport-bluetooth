@@ -25,6 +25,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use net::Target;
 use transport::error::{Result, TransportError, protocol_error};
 use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
@@ -266,7 +267,9 @@ impl Transport for BluetoothTransport {
     /// `target` may name a server channel, `bt://radio/3`, overriding the
     /// transport's.
     fn send(&self, target: &str, bytes: &[u8]) -> Result<()> {
-        let channel = match transport::socket::target("bt", target) {
+        let channel = match Target::under(&["bt"], target)
+            .map(|named| (named.authority(), named.path()))
+        {
             Some((_, channel)) if !channel.is_empty() => channel
                 .parse()
                 .ok()
