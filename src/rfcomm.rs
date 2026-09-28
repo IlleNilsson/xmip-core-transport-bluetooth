@@ -16,7 +16,7 @@ pub const N1: usize = 127;
 /// The most a frame can say it carries: the length is fifteen bits.
 pub const MAX_FRAME: usize = 32_767;
 /// The highest DLCI: six bits, and 62 and 63 are reserved.
-pub const MAX_DLCI: u8 = 61;
+const MAX_DLCI: u8 = 61;
 
 /// Address byte: extension bit set, command/response bit set.
 const EA_CR: u8 = 0x03;
