@@ -10,6 +10,11 @@
 //! writes the Stream in UIH frames of N1 bytes and closes the link; a
 //! Receive Location is the server that answers those and takes the Stream.
 //!
+//! **Acceptance is at-most-once here** ([`AT_MOST_ONCE`]): RFCOMM carries
+//! data in UIH frames that nothing acknowledges above the radio's own link,
+//! and the client's DISC is answered as it closes the link. Each data
+//! link's Stream arrives whole.
+//!
 //! The controller is a trait: [`LoopbackRadio`] is the server on an
 //! in-process link, which every test and every box without a Bluetooth
 //! controller drives, the way can-bus drives its loopback bus. A deployment's
@@ -29,12 +34,17 @@ use net::Target;
 use transport::error::{Result, TransportError, protocol_error};
 use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Arrived, Configured, Directions, Transport};
+use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
 use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
 use l2cap::Signal;
 use rfcomm::Control;
 use session::Session;
+
+/// Why a Stream over RFCOMM cannot be acknowledged after the receive cycle.
+pub const AT_MOST_ONCE: &str = "RFCOMM carries data in UIH frames that nothing acknowledges \
+                                above the radio's own link; the client's DISC is answered as \
+                                it closes the link";
 
 /// How long a peer is waited on when a Location says nothing else.
 pub const TIMEOUT: Duration = Duration::from_secs(5);
@@ -218,7 +228,8 @@ impl BluetoothTransport {
     }
 
     /// Serve one connection: answer the peer until a data link closes, and
-    /// hand over what it carried. `None` when nobody connected in time.
+    /// hand over what it carried, whole. `None` when nobody connected in
+    /// time. Acceptance is at-most-once ([`AT_MOST_ONCE`]).
     ///
     /// # Errors
     /// Where the link could not be read or the peer broke the protocol.
@@ -237,7 +248,11 @@ impl BluetoothTransport {
                 self.radio.transmit(answer)?;
             }
             if let Some((dlci, bytes)) = response.complete {
-                taken = Some(Arrived::new(self.origin(dlci >> 1), bytes));
+                taken = Some(Arrived::whole(
+                    self.origin(dlci >> 1),
+                    bytes,
+                    Acknowledgement::at_most_once(AT_MOST_ONCE),
+                ));
             }
             if response.closed {
                 return Ok(taken);
@@ -259,7 +274,12 @@ impl Transport for BluetoothTransport {
         Directions::BOTH
     }
 
-    /// Nobody connecting is not an error: an empty vector.
+    fn arrivals(&self) -> transport::Arrivals {
+        transport::Arrivals::Ordered("one line or bus, answered in the order it speaks")
+    }
+
+    /// Nobody connecting is not an error: an empty vector. Acceptance is
+    /// at-most-once here: RFCOMM acknowledges no data ([`AT_MOST_ONCE`]).
     fn receive(&self) -> Result<Vec<Arrived>> {
         Ok(self.receive_one()?.into_iter().collect())
     }
@@ -349,7 +369,7 @@ impl Loopback for BluetoothTransport {
             let (dlci, bytes) = radio
                 .take()
                 .ok_or_else(|| protocol_error("no data link closed"))?;
-            Ok(Arrived::new(format!("{origin}{}", dlci >> 1), bytes))
+            Ok(Taken::new(format!("{origin}{}", dlci >> 1), bytes))
         })))
     }
 
@@ -494,11 +514,14 @@ mod tests {
         let client = BluetoothTransport::new(Arc::new(End(air, false)), 5)
             .timing_out_after(Duration::from_secs(2));
         let sending = std::thread::spawn(move || client.send("bt://air/5", &[9; 300]));
-        let arrived = server.receive().expect("serving");
+        let mut arrived = server.receive().expect("serving");
         sending.join().expect("thread").expect("sending");
         assert_eq!(arrived.len(), 1);
-        assert_eq!(arrived[0].bytes, [9; 300]);
-        assert_eq!(arrived[0].origin_uri, "bt://air/5");
+        let arrived = arrived.remove(0);
+        assert!(!arrived.defers(), "RFCOMM is at-most-once");
+        let arrived = arrived.taken().expect("taken");
+        assert_eq!(arrived.bytes, [9; 300]);
+        assert_eq!(arrived.origin_uri, "bt://air/5");
         assert!(
             server.receive().expect("quiet").is_empty(),
             "nobody is not an error"
