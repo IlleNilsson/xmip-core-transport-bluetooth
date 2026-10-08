@@ -31,6 +31,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use net::Target;
+use transport::ArrivalIdentity;
 use transport::error::{Result, TransportError, protocol_error};
 use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
@@ -357,6 +358,12 @@ impl BluetoothTransport {
 }
 
 impl Loopback for BluetoothTransport {
+    fn arrival_identity(&self) -> ArrivalIdentity {
+        ArrivalIdentity::Unnamed(
+            "the radio hands RFCOMM frames only: no device address reaches this transport",
+        )
+    }
+
     /// The server on the link, holding the Stream the link delivered.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
         let radio = self
