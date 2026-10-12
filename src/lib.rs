@@ -279,6 +279,10 @@ impl Transport for BluetoothTransport {
         transport::Arrivals::Ordered("one line or bus, answered in the order it speaks")
     }
 
+    fn waiting(&self) -> transport::Waiting {
+        transport::Waiting::Polled("a read of the loopback radio returns at once")
+    }
+
     /// Nobody connecting is not an error: an empty vector. Acceptance is
     /// at-most-once here: RFCOMM acknowledges no data ([`AT_MOST_ONCE`]).
     fn receive(&self) -> Result<Vec<Arrived>> {
