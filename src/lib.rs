@@ -25,6 +25,7 @@
 pub mod l2cap;
 pub mod rfcomm;
 pub mod session;
+mod settings;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -35,8 +36,7 @@ use transport::ArrivalIdentity;
 use transport::error::{Result, TransportError, protocol_error};
 use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
-use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
+use transport::{Acknowledgement, Arrived, Directions, Taken, Transport};
 
 use l2cap::Signal;
 use rfcomm::Control;
@@ -285,13 +285,18 @@ impl Transport for BluetoothTransport {
 
     /// Nobody connecting is not an error: an empty vector. Acceptance is
     /// at-most-once here: RFCOMM acknowledges no data ([`AT_MOST_ONCE`]).
-    fn receive(&self) -> Result<Vec<Arrived>> {
+    fn receive_up_to(&self, _most: usize) -> Result<Vec<Arrived>> {
         Ok(self.receive_one()?.into_iter().collect())
+    }
+
+    fn sending(&self) -> transport::Sending {
+        transport::Sending::Gathered("the in-process link takes one write whole")
     }
 
     /// `target` may name a server channel, `bt://radio/3`, overriding the
     /// transport's.
-    fn send(&self, target: &str, bytes: &[u8]) -> Result<()> {
+    fn send_from(&self, target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
+        let bytes: &[u8] = &outgoing.gather()?;
         let channel = match Target::under(&["bt"], target)
             .map(|named| (named.authority(), named.path()))
         {
@@ -303,48 +308,6 @@ impl Transport for BluetoothTransport {
             _ => self.channel,
         };
         self.send_stream(channel, bytes)
-    }
-}
-
-impl Configured for BluetoothTransport {
-    /// The address names the radio. `loopback`, the in-process link, is the
-    /// one the estate has; a controller over HCI joins when it exposes one.
-    const SETTINGS: &'static Settings = &Settings {
-        technology: env!("CARGO_PKG_NAME"),
-        settings: &[
-            Setting {
-                name: "channel",
-                kind: Kind::Integer {
-                    minimum: 1,
-                    maximum: 30,
-                },
-                presence: Presence::Required,
-                meaning: "The RFCOMM server channel a Send Location opens and a Receive \
-                          Location serves.",
-                applies: Applies::Both,
-            },
-            Setting {
-                name: "timeout",
-                kind: Kind::Duration,
-                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
-                meaning: "How long a peer that does not answer is waited on.",
-                applies: Applies::Both,
-            },
-        ],
-    };
-
-    fn configured(address: &str, settings: &Read) -> Result<Self> {
-        let radio: Arc<dyn Radio> = match address {
-            "loopback" => Arc::new(LoopbackRadio::new()),
-            other => {
-                return Err(protocol_error(format!(
-                    "{other:?} is not a radio this estate has; `loopback` is"
-                )));
-            }
-        };
-        let channel = u8::try_from(settings.integer("channel"))
-            .map_err(|_| protocol_error("a server channel over 30"))?;
-        Ok(Self::new(radio, channel).timing_out_after(settings.duration("timeout")))
     }
 }
 
@@ -400,7 +363,9 @@ impl Loopback for BluetoothTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use transport::Configured;
     use transport::payload::edge_payloads;
+    use xcore::settings::Applies;
     use xcore::settings::Given;
 
     #[test]
