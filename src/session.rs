@@ -44,7 +44,7 @@ impl Session {
     pub fn handle(&mut self, packet: &[u8]) -> Result<Response> {
         let frame = l2cap::Frame::decode(packet)?;
         match frame.cid {
-            l2cap::SIGNALLING => self.signal(&Signal::decode(&frame.payload)?),
+            l2cap::SIGNALING => self.signal(&Signal::decode(&frame.payload)?),
             l2cap::FIRST_DYNAMIC if self.remote.is_some() => {
                 self.rfcomm(&rfcomm::Frame::decode(&frame.payload)?)
             }
@@ -95,7 +95,7 @@ impl Session {
             }
         };
         Ok(Response {
-            answers: vec![l2cap::Frame::new(l2cap::SIGNALLING, &answer.encode())?.encode()],
+            answers: vec![l2cap::Frame::new(l2cap::SIGNALING, &answer.encode())?.encode()],
             complete: None,
             closed,
         })
@@ -145,7 +145,7 @@ mod tests {
     use super::*;
 
     fn signal(signal: &Signal) -> Vec<u8> {
-        l2cap::Frame::new(l2cap::SIGNALLING, &signal.encode())
+        l2cap::Frame::new(l2cap::SIGNALING, &signal.encode())
             .expect("frame")
             .encode()
     }
