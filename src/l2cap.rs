@@ -1,11 +1,11 @@
 //! The L2CAP basic frame — a little-endian length, a channel identifier and
-//! the payload — and the signalling on channel 1 that opens and closes a
+//! the payload — and the signaling on channel 1 that opens and closes a
 //! connection-oriented channel to a protocol's PSM. RFCOMM listens on PSM 3.
 
 use transport::error::{Result, protocol_error};
 
-/// The signalling channel every ACL link has.
-pub const SIGNALLING: u16 = 0x0001;
+/// The signaling channel every ACL link has.
+pub const SIGNALING: u16 = 0x0001;
 /// The PSM RFCOMM listens on.
 pub const RFCOMM_PSM: u16 = 0x0003;
 /// The first dynamically allocated channel identifier.
@@ -78,7 +78,7 @@ impl Frame {
     }
 }
 
-/// A command on the signalling channel.
+/// A command on the signaling channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Signal {
     /// Open a channel to `psm`; `source` is the requester's identifier for it.
@@ -151,7 +151,7 @@ impl Signal {
         out
     }
 
-    /// The command at the start of a signalling payload.
+    /// The command at the start of a signaling payload.
     ///
     /// # Errors
     /// A code this crate does not signal, or data shorter than the code needs.
@@ -188,7 +188,7 @@ impl Signal {
                 source: word(1)?,
             }),
             other => Err(protocol_error(format!(
-                "a signalling code this crate does not carry: {other:#04x}"
+                "a signaling code this crate does not carry: {other:#04x}"
             ))),
         }
     }

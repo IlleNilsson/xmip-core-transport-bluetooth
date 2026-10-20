@@ -167,7 +167,7 @@ impl BluetoothTransport {
     }
 
     fn signal(&self, signal: &Signal) -> Result<Signal> {
-        let packet = l2cap::Frame::new(l2cap::SIGNALLING, &signal.encode())?.encode();
+        let packet = l2cap::Frame::new(l2cap::SIGNALING, &signal.encode())?.encode();
         let answer = l2cap::Frame::decode(&self.exchange(&packet)?)?;
         Signal::decode(&answer.payload)
     }
