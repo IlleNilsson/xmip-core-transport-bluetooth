@@ -36,7 +36,7 @@ use transport::ArrivalIdentity;
 use transport::error::{Result, TransportError, protocol_error};
 use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Acknowledgement, Arrived, Directions, Taken, Transport};
+use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
 
 use l2cap::Signal;
 use rfcomm::Control;
@@ -297,7 +297,7 @@ impl Transport for BluetoothTransport {
     /// transport's.
     fn send_from(&self, target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
         let bytes: &[u8] = &outgoing.gather()?;
-        let channel = match Target::under(&["bt"], target)
+        let channel = match Target::under(Self::SCHEMES, target)
             .map(|named| (named.authority(), named.path()))
         {
             Some((_, channel)) if !channel.is_empty() => channel
