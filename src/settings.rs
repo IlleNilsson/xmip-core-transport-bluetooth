@@ -36,6 +36,9 @@ impl Configured for BluetoothTransport {
         ],
     };
 
+    /// The schemes a Location's address is entered with to choose this technology.
+    const SCHEMES: &'static [&'static str] = &["bt"];
+
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let radio: Arc<dyn Radio> = match address {
             "loopback" => Arc::new(LoopbackRadio::new()),
