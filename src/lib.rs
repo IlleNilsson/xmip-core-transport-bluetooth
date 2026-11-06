@@ -28,8 +28,9 @@ pub mod session;
 mod settings;
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use xcore::lock::Locked;
 
 use net::Target;
 use transport::ArrivalIdentity;
@@ -84,10 +85,7 @@ impl LoopbackRadio {
     /// The next Stream a data link delivered whole: its DLCI and bytes.
     #[must_use]
     pub fn take(&self) -> Option<(u8, Vec<u8>)> {
-        self.arrived
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pop_front()
+        self.arrived.locked().pop_front()
     }
 }
 
@@ -97,30 +95,16 @@ impl Radio for LoopbackRadio {
     }
 
     fn transmit(&self, packet: &[u8]) -> Result<()> {
-        let response = self
-            .session
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .handle(packet)?;
-        self.to_client
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend(response.answers);
+        let response = self.session.locked().handle(packet)?;
+        self.to_client.locked().extend(response.answers);
         if let Some(complete) = response.complete {
-            self.arrived
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .push_back(complete);
+            self.arrived.locked().push_back(complete);
         }
         Ok(())
     }
 
     fn receive(&self, _timeout: Duration) -> Result<Option<Vec<u8>>> {
-        Ok(self
-            .to_client
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pop_front())
+        Ok(self.to_client.locked().pop_front())
     }
 }
 
