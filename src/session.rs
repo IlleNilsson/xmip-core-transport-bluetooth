@@ -143,6 +143,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn signal(signal: &Signal) -> Vec<u8> {
         l2cap::Frame::new(l2cap::SIGNALING, &signal.encode())
@@ -173,14 +174,14 @@ mod tests {
         };
         let response = session.handle(&signal(&connect)).expect("connect");
         let packet = l2cap::Frame::decode(&response.answers[0]).expect("l2cap");
-        assert!(matches!(
+        assert_matches!(
             Signal::decode(&packet.payload).expect("signal"),
             Signal::ConnectionResponse {
                 result: 0,
                 destination: 0x0040,
                 ..
             }
-        ));
+        );
         let response = session
             .handle(&frame(0, Control::Sabm, &[]))
             .expect("sabm 0");
@@ -216,10 +217,10 @@ mod tests {
         };
         let response = session.handle(&signal(&elsewhere)).expect("answered");
         let packet = l2cap::Frame::decode(&response.answers[0]).expect("l2cap");
-        assert!(matches!(
+        assert_matches!(
             Signal::decode(&packet.payload).expect("signal"),
             Signal::ConnectionResponse { result: 2, .. }
-        ));
+        );
         assert!(
             session.handle(&frame(2, Control::Uih, b"x")).is_err(),
             "still no channel"
