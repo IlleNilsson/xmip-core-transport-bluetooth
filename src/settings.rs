@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use transport::Configured;
 use transport::error::{Result, protocol_error};
-use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
+use xcore::settings::{Applies, Kind, Presence, Read, Setting, Settings};
 
 use crate::{BluetoothTransport, LoopbackRadio, Radio, TIMEOUT};
 
@@ -26,18 +26,20 @@ impl Configured for BluetoothTransport {
                           Location serves.",
                 applies: Applies::Both,
             },
-            Setting {
-                name: "timeout",
-                kind: Kind::Duration,
-                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
-                meaning: "How long a peer that does not answer is waited on.",
-                applies: Applies::Both,
-            },
+            transport::configured::timeout(
+                Applies::Both,
+                Some(TIMEOUT),
+                "How long a peer that does not answer is waited on.",
+            ),
         ],
     };
 
     /// The schemes a Location's address is entered with to choose this technology.
     const SCHEMES: &'static [&'static str] = &["bt"];
+
+    fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
+        Some(&mut self.timeout)
+    }
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let radio: Arc<dyn Radio> = match address {
@@ -50,6 +52,6 @@ impl Configured for BluetoothTransport {
         };
         let channel = u8::try_from(settings.integer("channel"))
             .map_err(|_| protocol_error("a server channel over 30"))?;
-        Ok(Self::new(radio, channel).timing_out_after(settings.duration("timeout")))
+        Ok(Self::new(radio, channel))
     }
 }

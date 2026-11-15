@@ -130,13 +130,6 @@ impl BluetoothTransport {
         }
     }
 
-    /// Give up on a peer that does not answer within `timeout`.
-    #[must_use]
-    pub const fn timing_out_after(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
     /// `bt://<radio>/<server channel>`.
     #[must_use]
     pub fn origin(&self, channel: u8) -> String {
