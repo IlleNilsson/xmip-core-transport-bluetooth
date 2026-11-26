@@ -21,37 +21,64 @@
 //! radio is the operating system's socket over HCI, joining here when the
 //! estate exposes one. The origin URI names the radio and the server
 //! channel: `bt://loopback/3`.
+//!
+//! **Built with its `declaration` feature alone** the crate is
+//! [`declaration`], what a Location of it is configured with, wherever it
+//! is built, and none of the code above, which is behind the default
+//! feature: what the surfaces' library carries (ADR-0064, amendment
+//! 2026-11-26). The wait a Location takes unless it says, `TIMEOUT`, is
+//! declared there with it.
 
+#[cfg(feature = "default")]
+mod configured;
+#[cfg(feature = "declaration")]
+pub mod declaration;
+#[cfg(feature = "default")]
 pub mod l2cap;
+#[cfg(feature = "default")]
 pub mod rfcomm;
+#[cfg(feature = "default")]
 pub mod session;
-mod settings;
 
+#[cfg(feature = "default")]
 use std::collections::VecDeque;
+#[cfg(feature = "default")]
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "default")]
 use std::time::Duration;
+#[cfg(feature = "default")]
 use xcore::lock::Locked;
 
+#[cfg(feature = "default")]
+use declaration::TIMEOUT;
+#[cfg(feature = "default")]
 use net::Target;
+#[cfg(feature = "default")]
 use transport::ArrivalIdentity;
+#[cfg(feature = "default")]
 use transport::error::{Result, TransportError, protocol_error};
+#[cfg(feature = "default")]
 use transport::held::Held;
+#[cfg(feature = "default")]
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
+#[cfg(feature = "default")]
 use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
 
+#[cfg(feature = "default")]
 use l2cap::Signal;
+#[cfg(feature = "default")]
 use rfcomm::Control;
+#[cfg(feature = "default")]
 use session::Session;
 
 /// Why a Stream over RFCOMM cannot be acknowledged after the receive cycle.
+#[cfg(feature = "default")]
 pub const AT_MOST_ONCE: &str = "RFCOMM carries data in UIH frames that nothing acknowledges \
                                 above the radio's own link; the client's DISC is answered as \
                                 it closes the link";
 
-/// How long a peer is waited on when a Location says nothing else.
-pub const TIMEOUT: Duration = Duration::from_secs(5);
-
 /// Where packets go and come from: one ACL link.
+#[cfg(feature = "default")]
 pub trait Radio: Send + Sync {
     /// The radio's name, for the origin URI.
     fn name(&self) -> &str;
@@ -69,6 +96,7 @@ pub trait Radio: Send + Sync {
 
 /// The server on an in-process link: what the client transmits, the
 /// session answers, and the answer is what the client receives next.
+#[cfg(feature = "default")]
 #[derive(Default)]
 pub struct LoopbackRadio {
     session: Mutex<Session>,
@@ -76,6 +104,7 @@ pub struct LoopbackRadio {
     arrived: Mutex<VecDeque<(u8, Vec<u8>)>>,
 }
 
+#[cfg(feature = "default")]
 impl LoopbackRadio {
     #[must_use]
     pub fn new() -> Self {
@@ -89,6 +118,7 @@ impl LoopbackRadio {
     }
 }
 
+#[cfg(feature = "default")]
 impl Radio for LoopbackRadio {
     fn name(&self) -> &'static str {
         "loopback"
@@ -109,6 +139,7 @@ impl Radio for LoopbackRadio {
 }
 
 /// One end of an ACL link, client when it sends and server when it receives.
+#[cfg(feature = "default")]
 #[derive(Clone)]
 pub struct BluetoothTransport {
     radio: Arc<dyn Radio>,
@@ -118,6 +149,7 @@ pub struct BluetoothTransport {
     loopback: Option<Arc<LoopbackRadio>>,
 }
 
+#[cfg(feature = "default")]
 impl BluetoothTransport {
     /// On `radio`, sending to and serving server channel `channel`.
     #[must_use]
@@ -243,6 +275,7 @@ impl BluetoothTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Transport for BluetoothTransport {
     fn name(&self) -> &'static str {
         "bluetooth"
@@ -288,6 +321,7 @@ impl Transport for BluetoothTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl BluetoothTransport {
     /// Both ends on one in-process link: a client on server channel 3 and
     /// the server that answers it, the loopback timeout on the client.
@@ -301,6 +335,7 @@ impl BluetoothTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Loopback for BluetoothTransport {
     fn arrival_identity(&self) -> ArrivalIdentity {
         ArrivalIdentity::Unnamed(
