@@ -23,11 +23,8 @@
 //! channel: `bt://loopback/3`.
 //!
 //! **Built with its `declaration` feature alone** the crate is
-//! [`declaration`], what a Location of it is configured with, wherever it
-//! is built, and none of the code above, which is behind the default
-//! feature: what the surfaces' library carries (ADR-0064, amendment
-//! 2026-11-26). The wait a Location takes unless it says, `TIMEOUT`, is
-//! declared there with it.
+//! [`declaration`]. It is the same wherever it is built. The wait a Location
+//! takes unless it says, `TIMEOUT`, is declared there with it.
 
 #[cfg(feature = "default")]
 mod configured;
