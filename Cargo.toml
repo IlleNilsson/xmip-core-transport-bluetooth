@@ -1,11 +1,11 @@
 [package]
 name = "xmip-core-transport-bluetooth"
-version = "0.1.0"
-edition = "2024"
-license = "AGPL-3.0-or-later"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 repository = "https://github.com/IlleNilsson/xmip-core-transport-bluetooth"
 description = "Bluetooth transport: RFCOMM over L2CAP — a Stream is the information of one data link connection, opened with SABM, carried in UIH frames and closed with DISC; a controller through the kernel's L2CAP sockets on Linux, on a dynamic PSM, or a loopback radio in process. A xmip-core-transport technology."
-publish = false
+publish.workspace = true
 
 [lib]
 path = "src/lib.rs"
