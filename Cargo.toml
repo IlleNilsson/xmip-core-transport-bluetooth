@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/IlleNilsson/xmip-core-transport-bluetooth"
-description = "Bluetooth transport: RFCOMM over L2CAP — a Stream is the information of one data link connection, opened with SABM, carried in UIH frames and closed with DISC; a loopback radio stands in for the controller. A xmip-core-transport technology."
+description = "Bluetooth transport: RFCOMM over L2CAP — a Stream is the information of one data link connection, opened with SABM, carried in UIH frames and closed with DISC; a controller through the kernel's L2CAP sockets on Linux, on a dynamic PSM, or a loopback radio in process. A xmip-core-transport technology."
 publish = false
 
 [lib]
@@ -12,25 +12,41 @@ path = "src/lib.rs"
 
 [dependencies]
 # A Technology depends on its parent Capability, never the reverse
-# (repository-model.md). Standard library otherwise: the framing is bytes
-# and the loopback is in this process. Its declaration takes the
-# capability's `timeout` (`transport::configured::timeout`).
+# (repository-model.md). Its declaration takes the capability's `timeout`
+# (`transport::configured::timeout`), and its code the capability's wait on
+# a descriptor (`transport::socket::ready`) and its kept listener
+# (`transport::kept::Kept`).
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main" }
-# A target read as a URI writes it (`net::Target`).
+# A target read as a URI writes it (`net::Target`), and a device address as
+# IEEE 802 writes a hardware address (`net::mac`).
 net = { package = "xmip-core-library-net", git = "https://github.com/IlleNilsson/xmip-core-library-net", branch = "main", optional = true }
 # The settings this technology declares (xcore::settings), read through
 # transport::Configured (ADR-0064, amendment 2026-09-26).
 xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core", branch = "main" }
 # The estate's encoding primitives: the RFCOMM frame check sequence, the CRC
-# of TS 27.010.
+# of TS 27.010, and the operating system's random source a virtual
+# controller's address is drawn from (`controller`, test support).
 codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main", optional = true }
+
+# On Linux, the kernel's L2CAP sockets a controller is reached through
+# (`src/socket.rs`): every call rustix's own and safe, but the address it
+# does not write, `struct sockaddr_l2` (`src/system.rs`).
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1", optional = true, default-features = false, features = ["std", "net"] }
 
 [features]
 # The code and its declaration: the transport guide's "The declaration",
 # module/core/capability/transport/doc/adding-a-transport.md.
-default = ["declaration", "dep:net", "dep:codec"]
-# The declaration alone, with the wait a Location takes unless it says.
+default = ["declaration", "dep:net", "dep:codec", "dep:rustix"]
+# The declaration alone, with the wait a Location takes unless it says and
+# the PSM.
 declaration = []
+# Two virtual controllers on Linux and a far end on the second
+# (`controller`): what a test reaches the kernel's L2CAP from both ends
+# with. A crate asks for it from its dev-dependencies, so it reaches tests
+# and never a production build. The technology's code, so the default with
+# it.
+test-support = ["default"]
 
 [dev-dependencies]
 # The loopback payloads the tests drive, from the capability's test
@@ -38,7 +54,11 @@ declaration = []
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main", features = ["test-support"] }
 
 [lints.rust]
-unsafe_code = "forbid"
+# deny, not forbid: the kernel's L2CAP socket address crosses a C interface
+# in one file, `src/system.rs`, which lowers this at its top (ADR-0050,
+# amendment 2026-09-25; `test/Unsafe.Test.ps1` lists it). Every other file
+# of the crate writes no unsafe code.
+unsafe_code = "deny"
 
 [lints.clippy]
 too_many_lines = "warn"

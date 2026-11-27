@@ -5,14 +5,21 @@
 
 use std::time::Duration;
 
-use xcore::settings::{Applies, Kind, Presence, Setting, Settings};
+use xcore::settings::{Applies, Fixed, Kind, Presence, Setting, Settings};
 
 /// How long a peer is waited on when a Location says nothing else.
 pub const TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The L2CAP PSM Xmip's RFCOMM listens on and connects to through a
+/// controller when a Location says none: the first dynamic PSM, 0x1001,
+/// which a process binds without `CAP_NET_BIND_SERVICE`. RFCOMM's own, 3,
+/// is the kernel's RFCOMM's on Linux; the in-process radio speaks it.
+pub const PSM: u16 = 0x1001;
+
 /// Every setting a Location takes beyond its address, which names the
-/// radio: `loopback`, the in-process link, is the one the estate has; a
-/// controller over HCI joins when it exposes one.
+/// device — the peer a Send Location connects to, the controller of this
+/// machine a Receive Location listens on, `00:00:00:00:00:00` for any —
+/// or `loopback`, the in-process radio.
 pub const SETTINGS: &Settings = &Settings {
     technology: env!("CARGO_PKG_NAME"),
     settings: &[
@@ -26,6 +33,25 @@ pub const SETTINGS: &Settings = &Settings {
             meaning: "The RFCOMM server channel a Send Location opens and a Receive \
                       Location serves.",
             applies: Applies::Both,
+        },
+        Setting {
+            name: "psm",
+            kind: Kind::Integer {
+                minimum: PSM as i64,
+                maximum: 0xffff,
+            },
+            presence: Presence::Default(Fixed::Integer(PSM as i64)),
+            meaning: "The L2CAP PSM a Location on a controller connects to or listens on: \
+                      odd, its upper octet even, as a dynamic PSM is.",
+            applies: Applies::Both,
+        },
+        Setting {
+            name: "controller",
+            kind: Kind::Address,
+            presence: Presence::Optional,
+            meaning: "The device address of this machine's controller a Send Location \
+                      connects from; the kernel's choice where it is left out.",
+            applies: Applies::Send,
         },
         transport::configured::timeout(
             Applies::Both,

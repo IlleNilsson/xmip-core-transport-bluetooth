@@ -1,6 +1,18 @@
-//! The L2CAP basic frame — a little-endian length, a channel identifier and
-//! the payload — and the signaling on channel 1 that opens and closes a
-//! connection-oriented channel to a protocol's PSM. RFCOMM listens on PSM 3.
+//! Xmip's own L2CAP on an ACL link: the basic frame — a little-endian
+//! length, a channel identifier and the payload — and the signaling on
+//! channel 1 that opens and closes a connection-oriented channel to a
+//! protocol's PSM. RFCOMM listens on PSM 3.
+//!
+//! Over a [`crate::Radio`] it is a channel both ways (`channel`): the one a
+//! client opens through the signaling ([`Opened`]), and the one a [`Server`]
+//! answers a peer's opening of ([`Served`]). The in-process radio runs the
+//! same [`Server`] as it is spoken to (`radio`).
+
+mod channel;
+mod server;
+
+pub use channel::{Opened, Served};
+pub use server::{Handled, Server};
 
 use transport::error::{Result, protocol_error};
 

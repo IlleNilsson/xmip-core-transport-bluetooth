@@ -1,50 +1,77 @@
-#![forbid(unsafe_code)]
-
 //! Streams that arrive over a Bluetooth serial port. One data link
 //! connection is one Stream: what was said between its SABM and its DISC.
 //!
 //! RFCOMM is the serial cable Bluetooth replaced — a barcode scanner, a
 //! printer, a meter on the bench — and it rides on L2CAP, the channel layer
-//! every ACL link has. A Send Location opens the L2CAP channel to PSM 3,
+//! every ACL link has. A Send Location opens an L2CAP channel to RFCOMM,
 //! starts the multiplexer on DLCI 0, opens the server channel's data link,
 //! writes the Stream in UIH frames of N1 bytes and closes the link; a
 //! Receive Location is the server that answers those and takes the Stream.
+//! RFCOMM is Xmip's own on every link (`session`).
 //!
 //! **Acceptance is at-most-once here** ([`AT_MOST_ONCE`]): RFCOMM carries
 //! data in UIH frames that nothing acknowledges above the radio's own link,
 //! and the client's DISC is answered as it closes the link. Each data
 //! link's Stream arrives whole.
 //!
-//! The controller is a trait: [`LoopbackRadio`] is the server on an
-//! in-process link, which every test and every box without a Bluetooth
-//! controller drives, the way can-bus drives its loopback bus. A deployment's
-//! radio is the operating system's socket over HCI, joining here when the
-//! estate exposes one. The origin URI names the radio and the server
-//! channel: `bt://loopback/3`.
+//! **What carries the L2CAP channel is a [`Link`].** A controller is reached
+//! through the kernel's L2CAP sockets on Linux (`socket`), with no
+//! privilege: a channel on a dynamic PSM, 4097 unless a Location says
+//! another, since the kernel's own RFCOMM holds PSM 3. A Location's address
+//! names the device, `bt://70:a8:d3:36:de:ad`: the peer a Send Location
+//! connects to, and the controller of this machine a Receive Location
+//! listens on, `00:00:00:00:00:00` for any. `bt://loopback` is the radio in
+//! process ([`LoopbackRadio`]), which every test and every box without a
+//! controller drives, Xmip's own L2CAP on it (`l2cap`). The origin URI names
+//! the peer and the server channel: `bt://70:a8:d3:36:de:ad/3`.
+//!
+//! Two virtual controllers on one Linux machine stand both ends for a test
+//! (`controller`, behind `test-support`): the kernel and `bluetoothd` see
+//! two controllers, and only the air between them is Xmip's.
 //!
 //! **Built with its `declaration` feature alone** the crate is
 //! [`declaration`]. It is the same wherever it is built. The wait a Location
-//! takes unless it says, `TIMEOUT`, is declared there with it.
+//! takes unless it says, `TIMEOUT`, and its PSM, `PSM`, are declared there
+//! with it.
 
 #[cfg(feature = "default")]
+pub mod address;
+#[cfg(feature = "default")]
 mod configured;
+#[cfg(all(
+    target_os = "linux",
+    feature = "default",
+    any(test, feature = "test-support")
+))]
+pub mod controller;
 #[cfg(feature = "declaration")]
 pub mod declaration;
 #[cfg(feature = "default")]
 pub mod l2cap;
 #[cfg(feature = "default")]
+pub mod link;
+#[cfg(feature = "default")]
+mod radio;
+#[cfg(feature = "default")]
 pub mod rfcomm;
 #[cfg(feature = "default")]
 pub mod session;
+#[cfg(all(target_os = "linux", feature = "default"))]
+pub mod socket;
+#[cfg(all(target_os = "linux", feature = "default"))]
+mod system;
 
 #[cfg(feature = "default")]
-use std::collections::VecDeque;
+pub use address::Address;
 #[cfg(feature = "default")]
-use std::sync::{Arc, Mutex};
+pub use link::{Channel, Link, Peer};
+#[cfg(feature = "default")]
+pub use radio::{LoopbackRadio, OnRadio, Radio};
+
+#[cfg(feature = "default")]
+use std::sync::Arc;
 #[cfg(feature = "default")]
 use std::time::Duration;
-#[cfg(feature = "default")]
-use xcore::lock::Locked;
 
 #[cfg(feature = "default")]
 use declaration::TIMEOUT;
@@ -53,7 +80,7 @@ use net::Target;
 #[cfg(feature = "default")]
 use transport::ArrivalIdentity;
 #[cfg(feature = "default")]
-use transport::error::{Result, TransportError, protocol_error};
+use transport::error::{Result, protocol_error};
 #[cfg(feature = "default")]
 use transport::held::Held;
 #[cfg(feature = "default")]
@@ -61,85 +88,17 @@ use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 #[cfg(feature = "default")]
 use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
 
-#[cfg(feature = "default")]
-use l2cap::Signal;
-#[cfg(feature = "default")]
-use rfcomm::Control;
-#[cfg(feature = "default")]
-use session::Session;
-
 /// Why a Stream over RFCOMM cannot be acknowledged after the receive cycle.
 #[cfg(feature = "default")]
 pub const AT_MOST_ONCE: &str = "RFCOMM carries data in UIH frames that nothing acknowledges \
                                 above the radio's own link; the client's DISC is answered as \
                                 it closes the link";
 
-/// Where packets go and come from: one ACL link.
-#[cfg(feature = "default")]
-pub trait Radio: Send + Sync {
-    /// The radio's name, for the origin URI.
-    fn name(&self) -> &str;
-    /// Put a packet on the link.
-    ///
-    /// # Errors
-    /// Where the link refused it.
-    fn transmit(&self, packet: &[u8]) -> Result<()>;
-    /// The next packet, or `None` when nothing arrived within `timeout`.
-    ///
-    /// # Errors
-    /// Where the link could not be read.
-    fn receive(&self, timeout: Duration) -> Result<Option<Vec<u8>>>;
-}
-
-/// The server on an in-process link: what the client transmits, the
-/// session answers, and the answer is what the client receives next.
-#[cfg(feature = "default")]
-#[derive(Default)]
-pub struct LoopbackRadio {
-    session: Mutex<Session>,
-    to_client: Mutex<VecDeque<Vec<u8>>>,
-    arrived: Mutex<VecDeque<(u8, Vec<u8>)>>,
-}
-
-#[cfg(feature = "default")]
-impl LoopbackRadio {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The next Stream a data link delivered whole: its DLCI and bytes.
-    #[must_use]
-    pub fn take(&self) -> Option<(u8, Vec<u8>)> {
-        self.arrived.locked().pop_front()
-    }
-}
-
-#[cfg(feature = "default")]
-impl Radio for LoopbackRadio {
-    fn name(&self) -> &'static str {
-        "loopback"
-    }
-
-    fn transmit(&self, packet: &[u8]) -> Result<()> {
-        let response = self.session.locked().handle(packet)?;
-        self.to_client.locked().extend(response.answers);
-        if let Some(complete) = response.complete {
-            self.arrived.locked().push_back(complete);
-        }
-        Ok(())
-    }
-
-    fn receive(&self, _timeout: Duration) -> Result<Option<Vec<u8>>> {
-        Ok(self.to_client.locked().pop_front())
-    }
-}
-
-/// One end of an ACL link, client when it sends and server when it receives.
+/// One end of a link, client when it sends and server when it receives.
 #[cfg(feature = "default")]
 #[derive(Clone)]
 pub struct BluetoothTransport {
-    radio: Arc<dyn Radio>,
+    link: Arc<dyn Link>,
     channel: u8,
     timeout: Duration,
     /// Set on a loopback: the radio holds what the server took.
@@ -148,65 +107,28 @@ pub struct BluetoothTransport {
 
 #[cfg(feature = "default")]
 impl BluetoothTransport {
-    /// On `radio`, sending to and serving server channel `channel`.
+    /// On `radio`, Xmip's own L2CAP on it, sending to and serving server
+    /// channel `channel`.
     #[must_use]
     pub fn new(radio: Arc<dyn Radio>, channel: u8) -> Self {
+        Self::on(Arc::new(OnRadio(radio)), channel)
+    }
+
+    /// On `link`, sending to and serving server channel `channel`.
+    #[must_use]
+    pub fn on(link: Arc<dyn Link>, channel: u8) -> Self {
         Self {
-            radio,
+            link,
             channel,
             timeout: TIMEOUT,
             loopback: None,
         }
     }
 
-    /// `bt://<radio>/<server channel>`.
+    /// `bt://<link>/<server channel>`.
     #[must_use]
     pub fn origin(&self, channel: u8) -> String {
-        format!("bt://{}/{channel}", self.radio.name())
-    }
-
-    fn exchange(&self, packet: &[u8]) -> Result<Vec<u8>> {
-        self.radio.transmit(packet)?;
-        self.radio
-            .receive(self.timeout)?
-            .ok_or_else(|| TransportError::retryable("the peer did not answer"))
-    }
-
-    fn signal(&self, signal: &Signal) -> Result<Signal> {
-        let packet = l2cap::Frame::new(l2cap::SIGNALING, &signal.encode())?.encode();
-        let answer = l2cap::Frame::decode(&self.exchange(&packet)?)?;
-        Signal::decode(&answer.payload)
-    }
-
-    /// Open the L2CAP channel to RFCOMM: the server's identifier for it.
-    fn connect(&self) -> Result<u16> {
-        let request = Signal::ConnectionRequest {
-            identifier: 1,
-            psm: l2cap::RFCOMM_PSM,
-            source: l2cap::FIRST_DYNAMIC,
-        };
-        match self.signal(&request)? {
-            Signal::ConnectionResponse {
-                destination,
-                result: l2cap::SUCCESS,
-                ..
-            } => Ok(destination),
-            Signal::ConnectionResponse { result, .. } => Err(protocol_error(format!(
-                "the peer refused the RFCOMM channel with result {result}"
-            ))),
-            _ => Err(protocol_error("not a connection response")),
-        }
-    }
-
-    fn command(&self, remote: u16, dlci: u8, control: Control) -> Result<()> {
-        let frame = rfcomm::Frame::command(dlci, control)?;
-        let packet = l2cap::Frame::new(remote, &frame.encode())?.encode();
-        let answer = l2cap::Frame::decode(&self.exchange(&packet)?)?;
-        match rfcomm::Frame::decode(&answer.payload)?.control {
-            Control::Ua => Ok(()),
-            Control::Dm => Err(protocol_error(format!("DLCI {dlci} is not open to us"))),
-            other => Err(protocol_error(format!("{other:?} where UA was due"))),
-        }
+        format!("bt://{}/{channel}", self.link.name())
     }
 
     /// Write `bytes` as one data link connection on server channel `channel`.
@@ -215,60 +137,35 @@ impl BluetoothTransport {
     /// A peer that does not answer, refuses the channel or the link, or
     /// answers something else.
     pub fn send_stream(&self, channel: u8, bytes: &[u8]) -> Result<()> {
-        let dlci = channel << 1;
-        let remote = self.connect()?;
-        self.command(remote, 0, Control::Sabm)?;
-        self.command(remote, dlci, Control::Sabm)?;
-        for chunk in bytes.chunks(rfcomm::N1) {
-            let frame = rfcomm::Frame::new(dlci, Control::Uih, chunk)?;
-            self.radio
-                .transmit(&l2cap::Frame::new(remote, &frame.encode())?.encode())?;
-        }
-        self.command(remote, dlci, Control::Disc)?;
-        self.command(remote, 0, Control::Disc)?;
-        let request = Signal::DisconnectionRequest {
-            identifier: 2,
-            destination: remote,
-            source: l2cap::FIRST_DYNAMIC,
-        };
-        self.signal(&request).map(drop)
+        let mut opened = self.link.open(self.timeout)?;
+        session::sent(&mut *opened, channel, bytes)?;
+        opened.close()
     }
 
-    /// Serve one connection: answer the peer until a data link closes, and
-    /// hand over what it carried, whole. `None` when nobody connected in
-    /// time. Acceptance is at-most-once ([`AT_MOST_ONCE`]).
+    /// Serve one connection: answer the peer until it closes its channel,
+    /// and hand over what its data link carried, whole, a device's address
+    /// on it as `peer.mac`. `None` when nobody connected in time.
+    /// Acceptance is at-most-once ([`AT_MOST_ONCE`]).
     ///
     /// # Errors
     /// Where the link could not be read or the peer broke the protocol.
     pub fn receive_one(&self) -> Result<Option<Arrived>> {
-        let mut session = Session::new();
-        let Some(first) = self.radio.receive(self.timeout)? else {
+        let Some((peer, mut channel)) = self.link.accept(self.timeout)? else {
             return Ok(None);
         };
-        let mut packet = first;
-        let mut taken = None;
-        // Served to the end: the peer closes the link, the multiplexer and
-        // the channel after its data, and each of those is answered.
-        loop {
-            let response = session.handle(&packet)?;
-            for answer in &response.answers {
-                self.radio.transmit(answer)?;
+        let taken = session::served(&mut *channel)?;
+        channel.close()?;
+        Ok(taken.map(|(dlci, bytes)| {
+            let arrived = Arrived::whole(
+                format!("bt://{peer}/{}", dlci >> 1),
+                bytes,
+                Acknowledgement::at_most_once(AT_MOST_ONCE),
+            );
+            match peer {
+                Peer::Device(address) => arrived.from_peer_mac(&address),
+                Peer::Radio(_) => arrived,
             }
-            if let Some((dlci, bytes)) = response.complete {
-                taken = Some(Arrived::whole(
-                    self.origin(dlci >> 1),
-                    bytes,
-                    Acknowledgement::at_most_once(AT_MOST_ONCE),
-                ));
-            }
-            if response.closed {
-                return Ok(taken);
-            }
-            packet = self
-                .radio
-                .receive(self.timeout)?
-                .ok_or_else(|| TransportError::retryable("the peer went quiet"))?;
-        }
+        }))
     }
 }
 
@@ -287,7 +184,7 @@ impl Transport for BluetoothTransport {
     }
 
     fn waiting(&self) -> transport::Waiting {
-        transport::Waiting::Polled("a read of the loopback radio returns at once")
+        self.link.waiting()
     }
 
     /// Nobody connecting is not an error: an empty vector. Acceptance is
@@ -297,11 +194,11 @@ impl Transport for BluetoothTransport {
     }
 
     fn sending(&self) -> transport::Sending {
-        transport::Sending::Gathered("the in-process link takes one write whole")
+        transport::Sending::Gathered("a Stream is gathered, then written in UIH frames of N1 bytes")
     }
 
-    /// `target` may name a server channel, `bt://radio/3`, overriding the
-    /// transport's.
+    /// `target` may name a server channel, `bt://70:a8:d3:36:de:ad/3`,
+    /// overriding the transport's.
     fn send_from(&self, target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
         let bytes: &[u8] = &outgoing.gather()?;
         let channel = match Target::under(Self::SCHEMES, target)
@@ -336,7 +233,8 @@ impl BluetoothTransport {
 impl Loopback for BluetoothTransport {
     fn arrival_identity(&self) -> ArrivalIdentity {
         ArrivalIdentity::Unnamed(
-            "the radio hands RFCOMM frames only: no device address reaches this transport",
+            "the in-process radio names no device; a controller's peer arrives with its device \
+             address as peer.mac",
         )
     }
 
@@ -347,7 +245,7 @@ impl Loopback for BluetoothTransport {
             .as_ref()
             .ok_or_else(|| protocol_error("a controller, not a loopback radio"))?;
         let radio = Arc::clone(radio);
-        let origin = format!("bt://{}/", self.radio.name());
+        let origin = format!("bt://{}/", self.link.name());
         Ok(Box::new(Held::new(self.origin(self.channel), move || {
             let (dlci, bytes) = radio
                 .take()
@@ -357,7 +255,7 @@ impl Loopback for BluetoothTransport {
     }
 
     fn send_to(&self, address: &str, payload: &[u8]) -> Result<()> {
-        Self::new(Arc::clone(&self.radio), self.channel)
+        Self::on(Arc::clone(&self.link), self.channel)
             .timing_out_after(self.timeout)
             .send(address, payload)
     }
@@ -372,6 +270,8 @@ impl Loopback for BluetoothTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
     use transport::Configured;
     use transport::payload::edge_payloads;
     use xcore::settings::Applies;
