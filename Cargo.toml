@@ -16,17 +16,17 @@ path = "src/lib.rs"
 # (`transport::configured::timeout`), and its code the capability's wait on
 # a descriptor (`transport::socket::ready`) and its kept listener
 # (`transport::kept::Kept`).
-transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main" }
+transport = { workspace = true }
 # A target read as a URI writes it (`net::Target`), and a device address as
 # IEEE 802 writes a hardware address (`net::mac`).
-net = { package = "xmip-core-library-net", git = "https://github.com/IlleNilsson/xmip-core-library-net", branch = "main", optional = true }
+net = { workspace = true, optional = true }
 # The settings this technology declares (xcore::settings), read through
 # transport::Configured (ADR-0064, amendment 2026-09-26).
-xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core", branch = "main" }
+xcore = { workspace = true }
 # The estate's encoding primitives: the RFCOMM frame check sequence, the CRC
 # of TS 27.010, and the operating system's random source a virtual
 # controller's address is drawn from (`controller`, test support).
-codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main", optional = true }
+codec = { workspace = true, optional = true }
 
 # On Linux, the kernel's L2CAP sockets a controller is reached through
 # (`src/socket.rs`): every call rustix's own and safe, but the address it
@@ -51,7 +51,7 @@ test-support = ["default"]
 [dev-dependencies]
 # The loopback payloads the tests drive, from the capability's test
 # support and never a production build (ADR-0044).
-transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main", features = ["test-support"] }
+transport = { workspace = true, features = ["test-support"] }
 
 [lints.rust]
 # deny, not forbid: the kernel's L2CAP socket address crosses a C interface
